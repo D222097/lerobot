@@ -19,6 +19,7 @@ Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wand
 """
 
 import dataclasses
+import importlib
 import logging
 import time
 from contextlib import nullcontext
@@ -32,6 +33,8 @@ import torch
 from termcolor import colored
 from torch.optim import Optimizer
 from tqdm import tqdm
+import numpy as np
+import random
 
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
@@ -141,13 +144,25 @@ def update_policy(
 
     # Optimizer step
     with lock if lock is not None else nullcontext():
-        optimizer.step()
+        if isinstance(optimizer, dict):
+            for opt in optimizer.values():
+                opt.step()
+        else:
+            optimizer.step()
 
-    optimizer.zero_grad()
+    if isinstance(optimizer, dict):
+        for opt in optimizer.values():
+            opt.zero_grad(set_to_none=True)
+    else:
+        optimizer.zero_grad(set_to_none=True)
 
     # Step through pytorch scheduler at every batch instead of epoch
     if lr_scheduler is not None:
-        lr_scheduler.step()
+        if isinstance(lr_scheduler, dict):
+            for sched in lr_scheduler.values():
+                sched.step()
+        else:
+            lr_scheduler.step() 
 
     # Update internal buffers if policy has update method
     if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
@@ -155,7 +170,7 @@ def update_policy(
 
     train_metrics.loss = loss.item()
     train_metrics.grad_norm = grad_norm.item()
-    train_metrics.lr = optimizer.param_groups[0]["lr"]
+    train_metrics.lr = optimizer['dit'].param_groups[0]["lr"] if isinstance(optimizer, dict) else optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
 
@@ -270,7 +285,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             logging.info("Creating policy")
         policy = make_policy(
             cfg=cfg.policy,
-            ds_meta=dataset.meta,
+            ds_meta=[ds.meta for ds in dataset] if isinstance(dataset, list) else dataset.meta,
             rename_map=cfg.rename_map,
         )
 
@@ -301,47 +316,52 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             "the checkpoint processors do not define them. Building processors from current policy config."
         )
         processor_pretrained_path = None
+    datasets_list = dataset if isinstance(dataset, list) else [dataset]
+    preprocessor = []
+    postprocessor = []
+    for ds in datasets_list:
+        processor_kwargs = {}
+        postprocessor_kwargs = {}
+        if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
+            processor_kwargs["dataset_stats"] = ds.meta.stats
 
-    processor_kwargs = {}
-    postprocessor_kwargs = {}
-    if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
-        processor_kwargs["dataset_stats"] = dataset.meta.stats
+        if cfg.is_reward_model_training:
+            processor_kwargs["dataset_meta"] = ds.meta
 
-    if cfg.is_reward_model_training:
-        processor_kwargs["dataset_meta"] = dataset.meta
+        if not cfg.is_reward_model_training and processor_pretrained_path is not None:
+            processor_kwargs["preprocessor_overrides"] = {
+                "device_processor": {"device": device.type},
+                "normalizer_processor": {
+                    "stats": ds.meta.stats,
+                    "features": {**policy.config.input_features, **policy.config.output_features},
+                    "norm_map": policy.config.normalization_mapping,
+                },
+            }
+            processor_kwargs["preprocessor_overrides"]["rename_observations_processor"] = {
+                "rename_map": cfg.rename_map
+            }
+            postprocessor_kwargs["postprocessor_overrides"] = {
+                "unnormalizer_processor": {
+                    "stats": ds.meta.stats,
+                    "features": policy.config.output_features,
+                    "norm_map": policy.config.normalization_mapping,
+                },
+            }
 
-    if not cfg.is_reward_model_training and processor_pretrained_path is not None:
-        processor_kwargs["preprocessor_overrides"] = {
-            "device_processor": {"device": device.type},
-            "normalizer_processor": {
-                "stats": dataset.meta.stats,
-                "features": {**policy.config.input_features, **policy.config.output_features},
-                "norm_map": policy.config.normalization_mapping,
-            },
-        }
-        processor_kwargs["preprocessor_overrides"]["rename_observations_processor"] = {
-            "rename_map": cfg.rename_map
-        }
-        postprocessor_kwargs["postprocessor_overrides"] = {
-            "unnormalizer_processor": {
-                "stats": dataset.meta.stats,
-                "features": policy.config.output_features,
-                "norm_map": policy.config.normalization_mapping,
-            },
-        }
-
-    if cfg.is_reward_model_training:
-        preprocessor, postprocessor = make_reward_pre_post_processors(
-            cfg.reward_model,
-            **processor_kwargs,
-        )
-    else:
-        preprocessor, postprocessor = make_pre_post_processors(
-            policy_cfg=cfg.policy,
-            pretrained_path=processor_pretrained_path,
-            **processor_kwargs,
-            **postprocessor_kwargs,
-        )
+        if cfg.is_reward_model_training:
+            pre, post = make_reward_pre_post_processors(
+                cfg.reward_model,
+                **processor_kwargs,
+            )
+        else:
+            pre, post = make_pre_post_processors(
+                policy_cfg=cfg.policy,
+                pretrained_path=processor_pretrained_path,
+                **processor_kwargs,
+                **postprocessor_kwargs,
+            )
+        preprocessor.append(pre)
+        postprocessor.append(post)
 
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
@@ -369,6 +389,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     num_total_params = sum(p.numel() for p in policy.parameters())
+    ds_num_frames = sum(ds.num_frames for ds in datasets_list)
+    ds_num_episodes = sum(ds.num_episodes for ds in datasets_list)
 
     if is_main_process:
         logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
@@ -379,8 +401,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 env_cfg=cfg.env, policy_cfg=cfg.policy
             )
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
-        logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
-        logging.info(f"{dataset.num_episodes=}")
+        logging.info(f"{ds_num_frames=} ({format_big_number(ds_num_frames)})")
+        logging.info(f"{ds_num_episodes=}")
         num_processes = accelerator.num_processes
         effective_bs = cfg.batch_size * num_processes
         logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
@@ -388,37 +410,68 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
-    if hasattr(active_cfg, "drop_n_last_frames"):
-        shuffle = False
-        sampler = EpisodeAwareSampler(
-            dataset.meta.episodes["dataset_from_index"],
-            dataset.meta.episodes["dataset_to_index"],
-            episode_indices_to_use=dataset.episodes,
-            drop_n_last_frames=active_cfg.drop_n_last_frames,
-            shuffle=True,
-        )
+    if cfg.dataset.weights is None:
+        raw_weights = [1.0] * len(datasets_list)
+    elif isinstance(cfg.dataset.weights, (float, int)):
+        raw_weights = [cfg.dataset.weights] * len(datasets_list)
     else:
-        shuffle = True
-        sampler = None
-
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        num_workers=cfg.num_workers,
-        batch_size=cfg.batch_size,
-        shuffle=shuffle and not cfg.dataset.streaming,
-        sampler=sampler,
-        pin_memory=device.type == "cuda",
-        drop_last=False,
-        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
-        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
-    )
+        raw_weights = cfg.dataset.weights
+    
+    dataloaders_raw = []
+    dataset_sizes = []
+    for i, ds in enumerate(datasets_list):
+        if hasattr(active_cfg, "drop_n_last_frames") and not cfg.dataset.streaming:
+            shuffle = False
+            sampler = EpisodeAwareSampler(
+                ds.meta.episodes["dataset_from_index"],
+                ds.meta.episodes["dataset_to_index"],
+                episode_indices_to_use=ds.episodes,
+                drop_n_last_frames=active_cfg.drop_n_last_frames,
+                shuffle=True,
+            )
+        else:
+            shuffle = True
+            sampler = None
+        
+        collate_fn = None
+        if cfg.dataset.collate_fn is not None:
+            module_path, callable_name = cfg.dataset.collate_fn.rsplit('.', 1)
+            module = importlib.import_module(module_path)
+            collate_fn = getattr(module, callable_name)
+            collate_fn = collate_fn(cfg)
+        suggested_num_workers = getattr(ds, "suggested_num_workers", cfg.num_workers)
+        dataloader = torch.utils.data.DataLoader(
+            ds,
+            num_workers=suggested_num_workers,
+            batch_size=cfg.batch_size,
+            shuffle=shuffle,
+            sampler=sampler,
+            collate_fn=collate_fn,
+            pin_memory=device.type == "cuda",
+            drop_last=len(datasets_list) > 1, 
+            prefetch_factor=2 if suggested_num_workers > 0 else None,
+        )
+        dataloaders_raw.append(dataloader)
+        dataset_sizes.append(ds.meta.total_frames)
+    sample_weights = np.array(raw_weights) * np.array(dataset_sizes)
+    sample_weights = sample_weights / np.sum(sample_weights)
 
     # Prepare everything with accelerator
     accelerator.wait_for_everyone()
-    policy, optimizer, dataloader, lr_scheduler = accelerator.prepare(
-        policy, optimizer, dataloader, lr_scheduler
-    )
-    dl_iter = cycle(dataloader)
+    policy = accelerator.prepare(policy)
+    def prepare_component(component):
+        if isinstance(component, dict):
+            return {k: accelerator.prepare(v) for k, v in component.items()}
+        return accelerator.prepare(component)
+
+    optimizer = prepare_component(optimizer)
+    lr_scheduler = prepare_component(lr_scheduler)
+
+    dataloaders = [accelerator.prepare(dl) for dl in dataloaders_raw]
+
+    dl_iters = [cycle(dl) for dl in dataloaders]
+    if len(dl_iters) == 1:
+        dl_iter = dl_iters[0]
 
     policy.train()
 
@@ -434,8 +487,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     effective_batch_size = cfg.batch_size * accelerator.num_processes
     train_tracker = MetricsTracker(
         cfg.batch_size,
-        dataset.num_frames,
-        dataset.num_episodes,
+        ds_num_frames,
+        ds_num_episodes,
         train_metrics,
         initial_step=step,
         accelerator=accelerator,
@@ -456,11 +509,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
-        batch = next(dl_iter)
-        for cam_key in dataset.meta.camera_keys:
+        if len(dl_iters) > 1:
+            dataloader_idx = random.choices(range(len(dataloaders)), weights=sample_weights)[0]
+            batch = next(dl_iters[dataloader_idx])
+        else:
+            dataloader_idx = 0
+            batch = next(dl_iter)
+        for cam_key in datasets_list[dataloader_idx].meta.camera_keys:
             if cam_key in batch and batch[cam_key].dtype == torch.uint8:
                 batch[cam_key] = batch[cam_key].to(dtype=torch.float32) / 255.0
-        batch = preprocessor(batch)
+        batch = preprocessor[dataloader_idx](batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         train_tracker, output_dict = update_policy(
@@ -508,8 +566,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     policy=accelerator.unwrap_model(policy),
                     optimizer=optimizer,
                     scheduler=lr_scheduler,
-                    preprocessor=preprocessor,
-                    postprocessor=postprocessor,
+                    # preprocessor=preprocessor,
+                    # postprocessor=postprocessor,
+                    preprocessor=preprocessor[dataloader_idx],
+                    postprocessor=postprocessor[dataloader_idx]
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
@@ -527,8 +587,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                         policy=accelerator.unwrap_model(policy),
                         env_preprocessor=env_preprocessor,
                         env_postprocessor=env_postprocessor,
-                        preprocessor=preprocessor,
-                        postprocessor=postprocessor,
+                        # preprocessor=preprocessor,
+                        # postprocessor=postprocessor,
+                        preprocessor=preprocessor[dataloader_idx],
+                        postprocessor=postprocessor[dataloader_idx],
                         n_episodes=cfg.eval.n_episodes,
                         videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                         max_episodes_rendered=4,
@@ -550,8 +612,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 }
                 eval_tracker = MetricsTracker(
                     cfg.batch_size,
-                    dataset.num_frames,
-                    dataset.num_episodes,
+                    ds_num_frames,
+                    ds_num_episodes,
                     eval_metrics,
                     initial_step=step,
                     accelerator=accelerator,
@@ -582,8 +644,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model)
             else:
                 unwrapped_model.push_model_to_hub(cfg)
-            preprocessor.push_to_hub(active_cfg.repo_id)
-            postprocessor.push_to_hub(active_cfg.repo_id)
+            # preprocessor.push_to_hub(active_cfg.repo_id)
+            # postprocessor.push_to_hub(active_cfg.repo_id)
+            preprocessor[dataloader_idx].push_to_hub(cfg.policy.repo_id)
+            postprocessor[dataloader_idx].push_to_hub(cfg.policy.repo_id)
 
     # Properly clean up the distributed process group
     accelerator.wait_for_everyone()

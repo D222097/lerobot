@@ -46,6 +46,7 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 
 from .act.configuration_act import ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
+from .flower.configuration_flower import FlowerConfig
 from .eo1.configuration_eo1 import EO1Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
@@ -147,6 +148,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .wall_x.modeling_wall_x import WallXPolicy
 
         return WallXPolicy
+    elif name == "flower":
+        from .flower.modeling_flower import FlowerPolicy
+
+        return FlowerPolicy
     elif name == "eo1":
         from .eo1.modeling_eo1 import EO1Policy
 
@@ -201,6 +206,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return XVLAConfig(**kwargs)
     elif policy_type == "wall_x":
         return WallXConfig(**kwargs)
+    elif policy_type == "flower":
+        return FlowerConfig(**kwargs)
     elif policy_type == "eo1":
         return EO1Config(**kwargs)
     else:
@@ -406,6 +413,15 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
+    
+    elif isinstance(policy_cfg, FlowerConfig):
+        from .flower.processor_flower import make_flower_pre_post_processors
+
+        processors = make_flower_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
     elif isinstance(policy_cfg, EO1Config):
         from .eo1.processor_eo1 import make_eo1_pre_post_processors
 
@@ -428,7 +444,7 @@ def make_pre_post_processors(
 
 def make_policy(
     cfg: PreTrainedConfig,
-    ds_meta: LeRobotDatasetMetadata | None = None,
+    ds_meta: LeRobotDatasetMetadata | list[LeRobotDatasetMetadata] | None = None,
     env_cfg: EnvConfig | None = None,
     rename_map: dict[str, str] | None = None,
 ) -> PreTrainedPolicy:
@@ -478,7 +494,12 @@ def make_policy(
 
     kwargs = {}
     if ds_meta is not None:
-        features = dataset_to_policy_features(ds_meta.features)
+        if isinstance(ds_meta, LeRobotDatasetMetadata):
+            features = dataset_to_policy_features(ds_meta.features)
+        else:
+            features = {}
+            for sub_meta in ds_meta:
+                features.update(dataset_to_policy_features(sub_meta.features))
     else:
         if not cfg.pretrained_path:
             logging.warning(

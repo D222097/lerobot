@@ -299,5 +299,5 @@ class DatasetReader:
         if "subtask_index" in self._meta.features and self._meta.subtasks is not None:
             subtask_idx = item["subtask_index"].item()
             item["subtask"] = self._meta.subtasks.iloc[subtask_idx].name
-
+        item["robot_type"] = self._meta.info['robot_type']
         return item

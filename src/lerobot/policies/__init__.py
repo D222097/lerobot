@@ -30,6 +30,7 @@ from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .utils import make_robot_action, prepare_observation_for_inference
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
+from .flower.configuration_flower import FlowerConfig as FlowerConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
 
 # NOTE: Policy modeling classes (e.g., GaussianActorPolicy) are intentionally NOT re-exported here.
@@ -51,6 +52,7 @@ __all__ = [
     "TDMPCConfig",
     "VQBeTConfig",
     "WallXConfig",
+    "FlowerConfig",
     "XVLAConfig",
     # Base class
     "PreTrainedPolicy",

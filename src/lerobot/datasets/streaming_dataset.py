@@ -322,8 +322,12 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             revision=self.revision,
         )
 
-        self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
-
+        # self.num_shards = min(self.hf_dataset.num_shards, max_num_shards)
+        min_shards_set = int(self.hf_dataset.num_shards ** 0.5) # A big big dataset generaly contains many parque shards.
+        min_num_shards = min(max_num_shards, int(self.hf_dataset.num_shards / min_shards_set)) # raw max_num_shards is num_worker 
+        self.num_shards = max(int(self.hf_dataset.num_shards / min_num_shards), 1) 
+        self.suggested_num_workers = min_num_shards # num_workers need to smaller than min_num_shards
+    
     @property
     def num_frames(self):
         return self.meta.total_frames
@@ -474,7 +478,8 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         ep_idx = item["episode_index"]
 
         # "timestamp" restarts from 0 for each episode, whereas we need a global timestep within the single .mp4 file (given by index/fps)
-        current_ts = item["index"] / self.fps
+        # current_ts = item["index"] / self.fps
+        current_ts = item["timestamp"] # In the _get_query_timestamps function, the starting point of each episode video is added to the timestamp.
 
         episode_boundaries_ts = {
             key: (
@@ -519,7 +524,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
             result.update(update)
 
         result["task"] = self.meta.tasks.iloc[item["task_index"]].name
-
+        result['robot_type'] = self.meta.info['robot_type']
         yield result
 
     def _get_query_timestamps(
@@ -533,6 +538,7 @@ class StreamingLeRobotDataset(torch.utils.data.IterableDataset):
         for key in self.meta.video_keys:
             if query_indices is not None and key in query_indices:
                 timestamps = keys_to_timestamps[key]
+                timestamps = [ts + episode_boundaries_ts[key][0] for ts in timestamps] # Add the starting point of the episode video
                 # Clamp out timesteps outside of episode boundaries
                 query_timestamps[key] = torch.clamp(
                     torch.tensor(timestamps), *episode_boundaries_ts[key]
