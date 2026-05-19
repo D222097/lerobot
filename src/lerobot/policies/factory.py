@@ -24,7 +24,7 @@ import torch
 
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDatasetMetadata
-
+from lerobot.datasets import LeRobotDatasetMetadata
 from lerobot.configs import FeatureType, PreTrainedConfig
 from lerobot.envs import EnvConfig, env_to_policy_features
 from lerobot.processor import (
