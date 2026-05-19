@@ -18,10 +18,10 @@ DATA_DIR_1=/mnt/data/share/datasets/InternRobotics/InternData-A1/interna1_merge_
 select_dataset=(
     interna1_franka_processed_diff_merge
     interna1_franka_processed_same_merge
-    interna1_genie1_processed_merge
-    interna1_lift2_processed_diff
-    interna1_lift2_processed_same_merge
-    interna1_split_aloha_processed_merge
+    # interna1_genie1_processed_merge
+    # interna1_lift2_processed_diff
+    # interna1_lift2_processed_same_merge
+    # interna1_split_aloha_processed_merge
 )
 
 for dir in "$DATA_DIR_1"/*/; do
@@ -55,7 +55,7 @@ accelerate launch \
   --policy.type=flower \
   --policy.training_stage=pretrain \
   --policy.freeze_embeddings_only=true \
-  --policy.vlm_path=/mnt/data/share/models/Florence-2-large \
+  --policy.vlm_path=/mnt/data/share/model/florence-community/Florence-2-large \
   --policy.horizon=64 \
   --policy.n_action_steps=64 \
   --policy.resize_h=224 \
