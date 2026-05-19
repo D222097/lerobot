@@ -109,9 +109,17 @@ def save_checkpoint(
         # policy config which we need for loading the model. In this case we'll write it ourselves.
         policy.config.save_pretrained(pretrained_dir)
     if preprocessor is not None:
-        preprocessor.save_pretrained(pretrained_dir)
+        if isinstance(preprocessor, list):
+            for idx, pre in enumerate(preprocessor):
+                pre.save_pretrained(pretrained_dir, config_filename=f"{pre.name}_{idx}.json")
+        else:
+            preprocessor.save_pretrained(pretrained_dir)
     if postprocessor is not None:
-        postprocessor.save_pretrained(pretrained_dir)
+        if isinstance(postprocessor, list):
+            for idx, post in enumerate(postprocessor):
+                post.save_pretrained(pretrained_dir, config_filename=f"{post.name}_{idx}.json")
+        else:
+            postprocessor.save_pretrained(pretrained_dir)
     save_training_state(checkpoint_dir, step, optimizer, scheduler)
 
 
