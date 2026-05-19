@@ -62,7 +62,7 @@ from lerobot.utils.utils import (
     inside_slurm,
 )
 
-from .lerobot_eval import eval_policy_all
+from lerobot.scripts.lerobot_eval import eval_policy_all
 
 
 def update_policy(
@@ -430,7 +430,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 shuffle=True,
             )
         else:
-            shuffle = True
+            shuffle = True and not cfg.dataset.streaming
             sampler = None
         
         collate_fn = None
@@ -566,10 +566,8 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     policy=accelerator.unwrap_model(policy),
                     optimizer=optimizer,
                     scheduler=lr_scheduler,
-                    # preprocessor=preprocessor,
-                    # postprocessor=postprocessor,
-                    preprocessor=preprocessor[dataloader_idx],
-                    postprocessor=postprocessor[dataloader_idx]
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
                 )
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
@@ -587,8 +585,6 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                         policy=accelerator.unwrap_model(policy),
                         env_preprocessor=env_preprocessor,
                         env_postprocessor=env_postprocessor,
-                        # preprocessor=preprocessor,
-                        # postprocessor=postprocessor,
                         preprocessor=preprocessor[dataloader_idx],
                         postprocessor=postprocessor[dataloader_idx],
                         n_episodes=cfg.eval.n_episodes,
@@ -644,10 +640,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 unwrapped_model.push_model_to_hub(cfg, peft_model=unwrapped_model)
             else:
                 unwrapped_model.push_model_to_hub(cfg)
-            # preprocessor.push_to_hub(active_cfg.repo_id)
-            # postprocessor.push_to_hub(active_cfg.repo_id)
-            preprocessor[dataloader_idx].push_to_hub(cfg.policy.repo_id)
-            postprocessor[dataloader_idx].push_to_hub(cfg.policy.repo_id)
+            for idx, (pre, post) in enumerate(zip(preprocessor, postprocessor)):
+                pre.push_to_hub(
+                    cfg.policy.repo_id,
+                    config_filename=f"{pre.name}_{idx}.json"
+                )
+                post.push_to_hub(
+                    cfg.policy.repo_id,
+                    config_filename=f"{post.name}_{idx}.json"
+                )
 
     # Properly clean up the distributed process group
     accelerator.wait_for_everyone()
