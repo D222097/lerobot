@@ -31,6 +31,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
 from typing import Any, Dict, Optional, Tuple, Collection, List
+from typing import TYPE_CHECKING
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
@@ -48,6 +49,7 @@ from lerobot.policies.utils import (
     populate_queues,
 )
 from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
+from lerobot.utils.import_utils import _transformers_available, require_package
 from lerobot.policies.flower.configuration_flower import FlowerConfig
 from lerobot.policies.flower.utils import generate_policy_prompt, ActionIndex
 from lerobot.policies.flower.transformers_flower import (
@@ -60,6 +62,17 @@ from lerobot.policies.flower.transformers_flower import (
     FlowBlock, 
     stateless_norm
 )
+
+# Florence2 config and modeling depend on transformers
+from .transformers_florence2.configuration_florence2 import Florence2Config
+from .transformers_florence2.modeling_florence2 import Florence2ForConditionalGeneration
+from .transformers_florence2.processing_florence2 import Florence2Processor
+# if TYPE_CHECKING or _transformers_available:
+#     from .transformers_florence2.configuration_florence2 import Florence2Config
+#     from .transformers_florence2.modeling_florence2 import Florence2ForConditionalGeneration
+# else:
+#     Florence2Config = None
+#     Florence2ForConditionalGeneration = None
 
 
 dtype_map = {
@@ -271,7 +284,7 @@ class FlowerModel(nn.Module):
         """Initialize and configure the Florence-2 VLM"""
         print(f"Loading Florence-2 from {vlm_path}")
         
-        self.vlm = AutoModelForCausalLM.from_pretrained(vlm_path, trust_remote_code=True)
+        self.vlm = Florence2ForConditionalGeneration.from_pretrained(vlm_path, trust_remote_code=True)
         
         # Handle parameter freezing
         if freeze_florence:
@@ -289,8 +302,9 @@ class FlowerModel(nn.Module):
                 param.requires_grad = True
 
         # Setup processor and tokenizer
-        self.processor = AutoProcessor.from_pretrained(vlm_path, trust_remote_code=True)
+        self.processor = Florence2Processor.from_pretrained(vlm_path, trust_remote_code=True)
         self.tokenizer = self.processor.tokenizer
+        self.tokenizer.pad_token = self.tokenizer.eos_token
         
         # Create prompt embedding
         self.prompt_embeds = self._create_prompt_embed("<Flow>")

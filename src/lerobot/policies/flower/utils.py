@@ -1,7 +1,8 @@
 import torch
-from transformers import AutoModelForCausalLM, AutoProcessor, AutoConfig, AutoTokenizer
 from torch.utils.data import default_collate
 from typing import Any, Generic, TypeVar, List
+
+from .transformers_florence2.processing_florence2 import Florence2Processor
 
 def generate_policy_prompt(
     instruction: str,
@@ -158,8 +159,10 @@ class ActionIndex:
 
 class FlowerDataCollator:
     def __init__(self, cfg):
-        self.processor = AutoProcessor.from_pretrained(cfg.policy.vlm_path, trust_remote_code=True)
+        self.processor = Florence2Processor.from_pretrained(cfg.policy.vlm_path, trust_remote_code=True)
+        
         self.tokenizer = self.processor.tokenizer
+        self.tokenizer.pad_token = self.tokenizer.eos_token
         self.action_space_index = ActionIndex(
             action_spaces=cfg.policy.action_spaces,
             action_dims=cfg.policy.action_dims,
