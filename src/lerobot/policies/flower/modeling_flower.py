@@ -36,8 +36,8 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
 from timm.layers.mlp import Mlp
 from torch import Tensor, nn
-# from transformers import AutoModelForCausalLM, AutoProcessor, AutoConfig
-from transformers import AutoProcessor, Florence2ForConditionalGeneration, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoProcessor, AutoConfig
+
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -271,7 +271,7 @@ class FlowerModel(nn.Module):
         """Initialize and configure the Florence-2 VLM"""
         print(f"Loading Florence-2 from {vlm_path}")
         
-        self.vlm = Florence2ForConditionalGeneration.from_pretrained(vlm_path)
+        self.vlm = AutoModelForCausalLM.from_pretrained(vlm_path, trust_remote_code=True)
         
         # Handle parameter freezing
         if freeze_florence:
@@ -281,11 +281,11 @@ class FlowerModel(nn.Module):
             embedding_layer = self.vlm.get_input_embeddings()
             for param in embedding_layer.parameters():
                 param.requires_grad = False
-            if hasattr(self.vlm.model.language_model, 'shared'):
-                for param in self.vlm.model.language_model.shared.parameters():
+            if hasattr(self.vlm.language_model, 'shared'):
+                for param in self.vlm.language_model.shared.parameters():
                     param.requires_grad = False
         if not freeze_vision_tower:
-            for param in self.vlm.model.vision_tower.parameters():
+            for param in self.vlm.vision_tower.parameters():
                 param.requires_grad = True
 
         # Setup processor and tokenizer
@@ -296,8 +296,8 @@ class FlowerModel(nn.Module):
         self.prompt_embeds = self._create_prompt_embed("<Flow>")
         
         # Remove unnecessary components
-        del self.vlm.model.language_model.decoder
-        del self.vlm.lm_head
+        del self.vlm.language_model.model.decoder
+        del self.vlm.language_model.lm_head
         
         # Setup token dropout
         self.vlm_token_dropout = nn.Dropout(self.config.token_dropout)
@@ -668,7 +668,7 @@ class FlowerModel(nn.Module):
         # Extract visual features
         images_per_camera = einops.rearrange(batch[OBS_IMAGES], "b s n ... -> n (b s) ...")
         img_features_list = torch.cat([
-            self.vlm.get_image_features(images).pooler_output for images in images_per_camera
+            self.vlm._encode_image(images) for images in images_per_camera
             ])
         img_features = einops.rearrange(
             img_features_list, "(n b s) c dim -> b (s n c) dim", b=batch_size, s=n_obs_steps
@@ -696,7 +696,7 @@ class FlowerModel(nn.Module):
         vis_attention_mask = torch.ones(img_features.shape[:2], device=device)  # define attention mask for image
         attention_mask = torch.cat([prompt_mask, vis_attention_mask, txt_attention_mask], dim=1)
         # Process through encoder
-        features = self.vlm.model.language_model.encoder(
+        features = self.vlm.get_encoder()(
             inputs_embeds=merged_embeds,
             attention_mask=attention_mask
         ).last_hidden_state
@@ -791,9 +791,7 @@ class FlowerModel(nn.Module):
         # Add special token if not in vocabulary
         self.tokenizer.add_special_tokens({'additional_special_tokens': [prompt_text]})
         self.vlm.resize_token_embeddings(len(self.tokenizer))
-        import inspect
-        source_file = inspect.getsourcefile(self.vlm.resize_token_embeddings)
-
+        
         # Get token ID and create embedding
         prompt_token_id = self.tokenizer.convert_tokens_to_ids(prompt_text)
         prompt_embed = nn.Parameter(

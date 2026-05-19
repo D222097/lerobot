@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export CUDA_VISIBLE_DEVICES=2,3
+export CUDA_VISIBLE_DEVICES=0,1
 
 # export MUJOCO_GL=egl
 # export PYOPENGL_PLATFORM=egl
@@ -13,15 +13,15 @@ export TOKENIZERS_PARALLELISM=false
 
 REPO_ID_LIST=()
 ROOT_LIST=()
-DATA_DIR_1=/mnt/data/share/data/interna1_merge_all #
+DATA_DIR_1=/mnt/data/share/datasets/InternRobotics/InternData-A1/interna1_merge_all #
 
 select_dataset=(
     interna1_franka_processed_diff_merge
     interna1_franka_processed_same_merge
-    # interna1_genie1_processed_merge
-    # interna1_lift2_processed_diff
-    # interna1_lift2_processed_same_merge
-    # interna1_split_aloha_processed_merge
+    interna1_genie1_processed_merge
+    interna1_lift2_processed_diff
+    interna1_lift2_processed_same_merge
+    interna1_split_aloha_processed_merge
 )
 
 for dir in "$DATA_DIR_1"/*/; do
@@ -55,7 +55,7 @@ accelerate launch \
   --policy.type=flower \
   --policy.training_stage=pretrain \
   --policy.freeze_embeddings_only=true \
-  --policy.vlm_path=/mnt/data/share/model/florence-community/Florence-2-large \
+  --policy.vlm_path=/mnt/data/share/models/Florence-2-large \
   --policy.horizon=64 \
   --policy.n_action_steps=64 \
   --policy.resize_h=224 \
@@ -76,7 +76,7 @@ accelerate launch \
   --batch_size=64 \
   --num_workers=2 \
   --steps=1600000 \
-  --save_freq=20 \
+  --save_freq=40000 \
   --output_dir=./outputs/pretrain/dual-${TIMESTAMP} \
   --job_name=dual-${TIMESTAMP} \
   --wandb.enable=true \

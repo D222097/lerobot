@@ -347,9 +347,6 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
 
         # Sanitize the pipeline name to create a valid filename prefix.
         sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", self.name.lower())
-        if config_filename is not None:
-            prefix = os.path.splitext(config_filename)[0]
-            sanitized_name = re.sub(r"[^a-zA-Z0-9_]", "_", prefix.lower())
 
         if config_filename is None:
             config_filename = f"{sanitized_name}.json"

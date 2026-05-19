@@ -135,7 +135,6 @@ class TrainPipelineConfig(HubMixin):
     def validate(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")
-        # import pdb; pdb.set_trace()
         reward_model_path = parser.get_path_arg("reward_model")
 
         if reward_model_path:

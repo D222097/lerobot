@@ -140,7 +140,6 @@ class FlowerConfig(PreTrainedConfig):
     robot_mapping: dict[str, int] = field(
         default_factory=lambda:{
             'panda': 0,
-            'franka':0
         }
     )
 
