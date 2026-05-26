@@ -20,11 +20,13 @@ import torch
 
 from lerobot.policies.flower.configuration_flower import FlowerConfig
 from lerobot.processor import (
+    AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
     NormalizerProcessorStep,
     PolicyAction,
     PolicyProcessorPipeline,
+    RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     UnnormalizerProcessorStep,
 )
@@ -62,10 +64,18 @@ def make_flower_pre_post_processors(
         A tuple containing the configured pre-processor and post-processor pipelines.
     """
 
+    relative_step = RelativeActionsProcessorStep(
+        enabled=config.use_relative_actions,
+        exclude_joints=getattr(config, "relative_exclude_joints", []),
+        action_names=getattr(config, "action_feature_names", None),
+    )
+    # OpenPI order: raw → relative → normalize → model → unnormalize → absolute
+
     input_steps = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
         DeviceProcessorStep(device=config.device),
+        relative_step,
         NormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -76,6 +86,7 @@ def make_flower_pre_post_processors(
         UnnormalizerProcessorStep(
             features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
         ),
+        AbsoluteActionsProcessorStep(enabled=config.use_relative_actions, relative_step=relative_step),
         DeviceProcessorStep(device="cpu"),
     ]
     return (

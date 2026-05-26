@@ -17,6 +17,7 @@ import abc
 import logging
 import math
 from dataclasses import asdict, dataclass, field
+from omegaconf import OmegaConf
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict
 

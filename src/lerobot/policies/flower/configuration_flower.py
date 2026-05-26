@@ -94,6 +94,13 @@ class FlowerConfig(PreTrainedConfig):
     query_seq_len: int = 100
     rope_theta: float = 32.0
 
+    # Relative actions: converts absolute actions to relative (relative to state).
+    use_relative_actions: bool = False
+    # Joint names to exclude from relative (kept absolute). Empty list = all dims relative.
+    relative_exclude_joints: list[str] = field(default_factory=lambda: ["gripper"])
+    # Populated at runtime from dataset metadata by make_policy.
+    action_feature_names: list[str] | None = None
+
     resize_h: int = 224
     resize_w: int = 224
     robot_type: str = 'panda'
