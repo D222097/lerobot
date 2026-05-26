@@ -577,9 +577,9 @@ def make_policy(
 
     # policy = torch.compile(policy, mode="reduce-overhead")
 
-    if not rename_map:
-        validate_visual_features_consistency(cfg, features)
-        # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
+    # if not rename_map:
+    #     validate_visual_features_consistency(cfg, features)
+    #     # TODO: (jadechoghari) - add a check_state(cfg, features) and check_action(cfg, features)
 
     return policy
 

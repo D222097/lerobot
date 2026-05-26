@@ -36,7 +36,7 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 
 from timm.layers.mlp import Mlp
 from torch import Tensor, nn
-from transformers import AutoProcessor, Florence2ForConditionalGeneration, BitsAndBytesConfig
+from transformers import AutoProcessor, Florence2ForConditionalGeneration, BitsAndBytesConfig, Florence2Config
 
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
@@ -269,9 +269,15 @@ class FlowerModel(nn.Module):
     # ========= init  ============
     def _setup_vlm(self, vlm_path: str, freeze_vision_tower: bool, freeze_florence: bool, freeze_embeddings_only: bool):
         """Initialize and configure the Florence-2 VLM"""
-        print(f"Loading Florence-2 from {vlm_path}")
         
-        self.vlm = Florence2ForConditionalGeneration.from_pretrained(vlm_path)
+        
+        if self.config.training_stage=="infer":
+            print(f"Loading Florence-2 from {vlm_path} config for inference")
+            vlm_config = Florence2Config.from_pretrained(vlm_path, trust_remote_code=True)
+            self.vlm = Florence2ForConditionalGeneration(vlm_config)
+        else:
+            print(f"Loading Florence-2 from {vlm_path}")
+            self.vlm = Florence2ForConditionalGeneration.from_pretrained(vlm_path)
         
         # Handle parameter freezing
         if freeze_florence:
